@@ -49,6 +49,13 @@ GLM_API_KEY = os.environ["GLM_API_KEY"]
 GLM_API_BASE = os.environ.get("GLM_API_BASE", "https://open.bigmodel.cn/api/paas/v4")
 GLM_MODEL = os.environ.get("GLM_MODEL", "glm-4.6")
 
+# Mã ngoài VN30 — vẫn lưu/hiển thị nhưng KHÔNG trộn vào thống kê bản tin rổ.
+EXTRA_TICKERS = {
+    t.strip().upper()
+    for t in os.environ.get("EXTRA_TICKERS", "VIX").split(",")
+    if t.strip()
+}
+
 sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 glm = OpenAI(api_key=GLM_API_KEY, base_url=GLM_API_BASE)
 
@@ -117,7 +124,8 @@ def compute_features(df: pd.DataFrame) -> dict | None:
 
 def get_tickers() -> list[str]:
     res = sb.table("vn30_daily_prices").select("ticker").execute()
-    tickers = sorted({r["ticker"] for r in (res.data or [])})
+    # Loại mã bổ sung (VIX…) khỏi thống kê rổ — chúng vẫn nằm trong DB cho frontend.
+    tickers = sorted({r["ticker"] for r in (res.data or [])} - EXTRA_TICKERS)
     return tickers
 
 

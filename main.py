@@ -49,16 +49,31 @@ VN30_FALLBACK = [
     'TCB', 'TPB', 'VCB', 'VHM', 'VIB', 'VIC', 'VJC', 'VNM', 'VPB', 'VRE'
 ]
 
+# Mã bổ sung ngoài VN30 (luôn được theo dõi). Có thể override qua env EXTRA_TICKERS="VIX,DIG".
+EXTRA_TICKERS = [
+    t.strip().upper()
+    for t in os.environ.get("EXTRA_TICKERS", "VIX").split(",")
+    if t.strip()
+]
+
 
 def get_vn30_tickers():
     try:
         symbols = _vn.stock(symbol='ACB', source=VN_SOURCE).listing.symbols_by_group('VN30')
         tickers = sorted({str(s).strip().upper() for s in symbols if str(s).strip()})
         if len(tickers) >= 20:
-            return tickers
+            base = tickers
+        else:
+            base = VN30_FALLBACK
     except Exception as e:
         print(f"⚠️ Không lấy được VN30 động ({e}), dùng fallback.")
-    return VN30_FALLBACK
+        base = VN30_FALLBACK
+    # Union mã bổ sung, giữ thứ tự: VN30 trước rồi extra.
+    merged = list(base)
+    for t in EXTRA_TICKERS:
+        if t not in merged:
+            merged.append(t)
+    return merged
 
 
 def fetch_history_with_retry(ticker: str, start_date: str, end_date: str, max_retries: int = 3):
