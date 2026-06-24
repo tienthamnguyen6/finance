@@ -4,8 +4,17 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import PriceChart from "@/components/PriceChart";
 import AIAnalysis from "@/components/AIAnalysis";
+import Sparkline from "@/components/Sparkline";
 
-type SnapshotRow = { ticker: string; trade_date: string; close_price: number; daily_return: number | null };
+type SnapshotRow = {
+  ticker: string;
+  trade_date: string;
+  close_price: number;
+  daily_return: number | null;
+  volume: number | null;
+  spark: number[];
+};
+type SortMode = "ticker" | "gainers" | "losers" | "volume";
 type HistoryRow = {
   trade_date: string;
   open_price: number | null;
@@ -35,17 +44,38 @@ function PageInner() {
   const [active, setActive] = useState<string | null>(queryTicker);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [loadingHist, setLoadingHist] = useState(false);
+  const [sortMode, setSortMode] = useState<SortMode>("ticker");
 
   useEffect(() => {
     fetch("/api/prices")
       .then((r) => r.json())
       .then((d) => {
         const rows: SnapshotRow[] = d.rows ?? [];
-        rows.sort((a, b) => a.ticker.localeCompare(b.ticker));
         setSnapshot(rows);
-        if (!active && rows[0]) setActive(rows[0].ticker);
+        if (!active && rows[0]) {
+          rows.sort((a, b) => a.ticker.localeCompare(b.ticker));
+          setActive(rows[0].ticker);
+        }
       });
   }, []);
+
+  const sortedSnapshot = useMemo(() => {
+    const arr = snapshot.slice();
+    switch (sortMode) {
+      case "gainers":
+        arr.sort((a, b) => (b.daily_return ?? -1) - (a.daily_return ?? -1));
+        break;
+      case "losers":
+        arr.sort((a, b) => (a.daily_return ?? 1) - (b.daily_return ?? 1));
+        break;
+      case "volume":
+        arr.sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0));
+        break;
+      default:
+        arr.sort((a, b) => a.ticker.localeCompare(b.ticker));
+    }
+    return arr;
+  }, [snapshot, sortMode]);
 
   // Khi URL ?t= đổi (vd: từ Screener navigate sang), cập nhật active.
   useEffect(() => {
@@ -74,32 +104,57 @@ function PageInner() {
   return (
     <div className="flex h-screen">
       {/* Sidebar */}
-      <aside className="w-56 border-r border-border bg-panel overflow-y-auto">
+      <aside className="w-72 border-r border-border bg-panel overflow-y-auto flex flex-col">
         <div className="p-3 border-b border-border">
           <h1 className="font-bold text-lg">Finance AI</h1>
           <p className="text-xs text-gray-400">VN30 · GLM-powered</p>
-          <Link
-            href="/screen"
-            className="mt-2 inline-block text-xs text-blue-400 hover:underline"
-          >
-            🔍 Screener →
-          </Link>
+          <div className="mt-2 flex gap-3 text-xs">
+            <Link href="/screen" className="text-blue-400 hover:underline">
+              🔍 Screener
+            </Link>
+            <Link href="/compare" className="text-blue-400 hover:underline">
+              ⚖️ So sánh
+            </Link>
+          </div>
         </div>
-        <ul>
-          {snapshot.map((r) => {
-            const up = (r.daily_return ?? 0) >= 0;
+
+        <div className="p-2 border-b border-border flex gap-1 text-[11px]">
+          {(["ticker", "gainers", "losers", "volume"] as SortMode[]).map((m) => (
+            <button
+              key={m}
+              onClick={() => setSortMode(m)}
+              className={`flex-1 px-2 py-1 rounded ${
+                sortMode === m ? "bg-blue-600 text-white" : "text-gray-400 hover:bg-white/5"
+              }`}
+            >
+              {m === "ticker" ? "A-Z" : m === "gainers" ? "Tăng" : m === "losers" ? "Giảm" : "Vol"}
+            </button>
+          ))}
+        </div>
+
+        <ul className="flex-1">
+          {sortedSnapshot.map((r) => {
+            const ret = r.daily_return ?? 0;
+            const up = ret >= 0;
             return (
               <li key={r.ticker}>
                 <button
                   onClick={() => setActive(r.ticker)}
-                  className={`w-full flex justify-between items-center px-3 py-2 text-sm hover:bg-white/5 ${
+                  className={`w-full grid grid-cols-[1fr_auto_auto] gap-2 items-center px-3 py-2 text-sm hover:bg-white/5 ${
                     active === r.ticker ? "bg-white/10" : ""
                   }`}
                 >
-                  <span className="font-mono">{r.ticker}</span>
-                  <span className={up ? "text-up" : "text-down"}>
-                    {r.close_price?.toLocaleString()}
-                  </span>
+                  <div className="flex flex-col items-start min-w-0">
+                    <span className="font-mono font-semibold">{r.ticker}</span>
+                    <span className="text-[10px] text-gray-500">
+                      {r.close_price?.toLocaleString()}
+                    </span>
+                  </div>
+                  <Sparkline values={r.spark ?? []} positive={up} />
+                  <div className={`text-right text-xs ${up ? "text-up" : "text-down"}`}>
+                    {up ? "+" : ""}
+                    {(ret * 100).toFixed(2)}%
+                  </div>
                 </button>
               </li>
             );

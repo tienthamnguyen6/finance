@@ -37,17 +37,36 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ticker, rows });
   }
 
-  // Snapshot: ngày mới nhất cho mỗi mã.
+  // Snapshot: ngày mới nhất + sparkline 20 phiên + volume.
+  const SPARK_LEN = 20;
   const { data, error } = await supabase
     .from("vn30_daily_prices")
-    .select("ticker, trade_date, close_price, daily_return")
+    .select("ticker, trade_date, close_price, daily_return, volume")
     .order("trade_date", { ascending: false })
-    .limit(500);
+    .limit(30 * SPARK_LEN + 50);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const latest = new Map<string, any>();
-  for (const r of data ?? []) {
-    if (!latest.has(r.ticker)) latest.set(r.ticker, r);
+  type Raw = { ticker: string; trade_date: string; close_price: number; daily_return: number | null; volume: number | null };
+  const grouped = new Map<string, Raw[]>();
+  for (const r of (data ?? []) as Raw[]) {
+    const arr = grouped.get(r.ticker) ?? [];
+    if (arr.length < SPARK_LEN) arr.push(r);
+    grouped.set(r.ticker, arr);
   }
-  return NextResponse.json({ rows: Array.from(latest.values()) });
+
+  const rows = Array.from(grouped.entries()).map(([ticker, recent]) => {
+    // recent đang DESC (mới → cũ). Đảo lại để sparkline đúng chiều thời gian.
+    const asc = recent.slice().reverse();
+    const last = asc[asc.length - 1];
+    return {
+      ticker,
+      trade_date: last.trade_date,
+      close_price: last.close_price,
+      daily_return: last.daily_return,
+      volume: last.volume,
+      spark: asc.map((r) => r.close_price),
+    };
+  });
+
+  return NextResponse.json({ rows });
 }

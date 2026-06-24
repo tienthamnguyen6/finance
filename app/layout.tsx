@@ -1,5 +1,6 @@
 import "./globals.css";
 import type { Metadata } from "next";
+import ChatBot from "@/components/ChatBot";
 
 export const metadata: Metadata = {
   title: "Finance AI — VN30 Dashboard",
@@ -9,7 +10,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="vi">
-      <body className="min-h-screen">{children}</body>
+      <body className="min-h-screen">
+        {children}
+        <ChatBot />
+      </body>
     </html>
   );
 }
