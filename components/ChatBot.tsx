@@ -107,7 +107,9 @@ export default function ChatBot() {
   }
 
   return (
-    <div className="fixed bottom-5 right-5 z-50 w-[380px] h-[560px] bg-panel border border-border rounded-xl shadow-2xl flex flex-col">
+    <div className="fixed z-50 bg-panel border border-border shadow-2xl flex flex-col
+      inset-x-2 bottom-2 top-2 rounded-xl
+      sm:inset-x-auto sm:top-auto sm:bottom-5 sm:right-5 sm:w-[380px] sm:h-[560px]">
       <header className="p-3 border-b border-border flex items-center gap-2">
         <div className="flex-1">
           <div className="font-semibold text-sm">Trợ lý tài chính</div>

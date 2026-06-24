@@ -51,6 +51,13 @@ function PageInner() {
   const [loadingHist, setLoadingHist] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>("ticker");
   const [chartDays, setChartDays] = useState(120);
+  const [sidebarOpen, setSidebarOpen] = useState(false); // drawer trên mobile
+
+  // Chọn mã: set active + đóng drawer (mobile).
+  const pickTicker = (t: string) => {
+    setActive(t);
+    setSidebarOpen(false);
+  };
 
   useEffect(() => {
     fetch("/api/prices")
@@ -108,23 +115,58 @@ function PageInner() {
   }, [history]);
 
   return (
-    <div className="flex h-screen">
-      {/* Sidebar */}
-      <aside className="w-72 border-r border-border bg-panel overflow-y-auto flex flex-col">
-        <div className="p-3 border-b border-border">
-          <h1 className="font-bold text-lg">Finance AI</h1>
-          <p className="text-xs text-gray-400">VN30 · GLM-powered</p>
-          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
-            <Link href="/screen" className="text-blue-400 hover:underline">
-              🔍 Screener
-            </Link>
-            <Link href="/compare" className="text-blue-400 hover:underline">
-              ⚖️ So sánh
-            </Link>
-            <Link href="/heatmap" className="text-blue-400 hover:underline">
-              🔥 Heatmap
-            </Link>
+    <div className="flex h-screen md:flex-row flex-col">
+      {/* Top bar (chỉ mobile) */}
+      <div className="md:hidden flex items-center gap-3 p-3 border-b border-border bg-panel">
+        <button
+          onClick={() => setSidebarOpen(true)}
+          className="text-xl leading-none px-1"
+          aria-label="Mở danh sách mã"
+        >
+          ☰
+        </button>
+        <span className="font-bold">Finance AI</span>
+        {active && <span className="font-mono text-sm text-gray-400 ml-auto">{active}</span>}
+      </div>
+
+      {/* Backdrop khi drawer mở (mobile) */}
+      {sidebarOpen && (
+        <div
+          className="md:hidden fixed inset-0 bg-black/50 z-30"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebar — static trên desktop, drawer trượt trên mobile */}
+      <aside
+        className={`w-72 border-r border-border bg-panel overflow-y-auto flex flex-col
+          fixed inset-y-0 left-0 z-40 transform transition-transform duration-200
+          md:static md:translate-x-0 md:z-auto
+          ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
+      >
+        <div className="p-3 border-b border-border flex items-start">
+          <div className="flex-1">
+            <h1 className="font-bold text-lg">Finance AI</h1>
+            <p className="text-xs text-gray-400">VN30 · GLM-powered</p>
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+              <Link href="/screen" className="text-blue-400 hover:underline">
+                🔍 Screener
+              </Link>
+              <Link href="/compare" className="text-blue-400 hover:underline">
+                ⚖️ So sánh
+              </Link>
+              <Link href="/heatmap" className="text-blue-400 hover:underline">
+                🔥 Heatmap
+              </Link>
+            </div>
           </div>
+          <button
+            onClick={() => setSidebarOpen(false)}
+            className="md:hidden text-gray-400 text-lg px-1"
+            aria-label="Đóng"
+          >
+            ✕
+          </button>
         </div>
 
         <div className="p-2 border-b border-border flex gap-1 text-[11px]">
@@ -148,7 +190,7 @@ function PageInner() {
             return (
               <li key={r.ticker}>
                 <button
-                  onClick={() => setActive(r.ticker)}
+                  onClick={() => pickTicker(r.ticker)}
                   className={`w-full grid grid-cols-[1fr_auto_auto] gap-2 items-center px-3 py-2 text-sm hover:bg-white/5 ${
                     active === r.ticker ? "bg-white/10" : ""
                   }`}
@@ -175,26 +217,26 @@ function PageInner() {
       </aside>
 
       {/* Main */}
-      <main className="flex-1 overflow-y-auto p-6 space-y-4">
+      <main className="flex-1 overflow-y-auto p-3 md:p-6 space-y-4">
         <MarketBrief />
         {active ? (
           <>
-            <header className="flex items-baseline gap-4">
-              <h2 className="text-2xl font-bold">{active}</h2>
+            <header className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+              <h2 className="text-xl md:text-2xl font-bold">{active}</h2>
               {stats && (
                 <>
-                  <span className="text-xl">{stats.last.close_price.toLocaleString()}</span>
+                  <span className="text-lg md:text-xl">{stats.last.close_price.toLocaleString()}</span>
                   <span className={stats.chg >= 0 ? "text-up" : "text-down"}>
                     {stats.chg >= 0 ? "▲" : "▼"} {stats.chg.toFixed(2)}%
                   </span>
-                  <span className="text-sm text-gray-400">
+                  <span className="text-xs md:text-sm text-gray-400">
                     Cao {stats.high.toLocaleString()} · Thấp {stats.low.toLocaleString()}
                   </span>
                 </>
               )}
             </header>
 
-            <section className="bg-panel border border-border rounded-lg p-4">
+            <section className="bg-panel border border-border rounded-lg p-2 md:p-4">
               <h3 className="font-semibold mb-2">Phân tích kỹ thuật — {chartDays} phiên</h3>
               {loadingHist ? (
                 <div className="text-gray-500 text-sm">Đang tải biểu đồ…</div>

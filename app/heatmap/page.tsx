@@ -84,7 +84,7 @@ export default function HeatmapPage() {
   }, [rows, metric]);
 
   return (
-    <div className="min-h-screen p-6 space-y-4">
+    <div className="min-h-screen p-3 md:p-6 space-y-4">
       <header className="flex items-baseline justify-between">
         <div>
           <h1 className="text-2xl font-bold">Heatmap VN30</h1>
@@ -119,7 +119,7 @@ export default function HeatmapPage() {
       {loading ? (
         <div className="text-center text-gray-500 p-12">Đang tải…</div>
       ) : (
-        <section className="grid grid-cols-5 gap-2">
+        <section className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
           {cells.map((c) => {
             const v = c.value[metric];
             const bg = cellColor(v, metric);

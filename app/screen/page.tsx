@@ -112,7 +112,7 @@ export default function ScreenPage() {
   );
 
   return (
-    <div className="min-h-screen p-6 space-y-4">
+    <div className="min-h-screen p-3 md:p-6 space-y-4">
       <header className="flex items-baseline justify-between">
         <div>
           <h1 className="text-2xl font-bold">Screener — VN30</h1>
