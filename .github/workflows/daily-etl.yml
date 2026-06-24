@@ -1,0 +1,35 @@
+name: Daily ETL — VN30 prices
+
+on:
+  schedule:
+    # 16:30 ICT = 09:30 UTC, sau khi HOSE đóng cửa (15h ICT) ~1.5h cho vnstock cập nhật.
+    - cron: '30 9 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      backfill_days:
+        description: 'Số ngày backfill (mặc định 7 để bù ngày lỗi)'
+        required: false
+        default: '7'
+
+jobs:
+  etl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Run ETL
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          BACKFILL_DAYS: ${{ github.event.inputs.backfill_days || '7' }}
+          VNSTOCK_SOURCE: VCI
+        run: python main.py
