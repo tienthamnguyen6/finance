@@ -52,6 +52,7 @@ function PageInner() {
   const [sortMode, setSortMode] = useState<SortMode>("ticker");
   const [chartDays, setChartDays] = useState(120);
   const [sidebarOpen, setSidebarOpen] = useState(false); // drawer trên mobile
+  const [search, setSearch] = useState("");
 
   // Chọn mã: set active + đóng drawer (mobile).
   const pickTicker = (t: string) => {
@@ -73,7 +74,8 @@ function PageInner() {
   }, []);
 
   const sortedSnapshot = useMemo(() => {
-    const arr = snapshot.slice();
+    const q = search.trim().toUpperCase();
+    const arr = (q ? snapshot.filter((r) => r.ticker.includes(q)) : snapshot.slice());
     switch (sortMode) {
       case "gainers":
         arr.sort((a, b) => (b.daily_return ?? -1) - (a.daily_return ?? -1));
@@ -88,7 +90,12 @@ function PageInner() {
         arr.sort((a, b) => a.ticker.localeCompare(b.ticker));
     }
     return arr;
-  }, [snapshot, sortMode]);
+  }, [snapshot, sortMode, search]);
+
+  // Enter trong ô tìm kiếm → chọn luôn mã khớp đầu tiên.
+  const onSearchEnter = () => {
+    if (sortedSnapshot[0]) pickTicker(sortedSnapshot[0].ticker);
+  };
 
   // Khi URL ?t= đổi (vd: từ Screener navigate sang), cập nhật active.
   useEffect(() => {
@@ -183,6 +190,28 @@ function PageInner() {
           ))}
         </div>
 
+        <div className="p-2 border-b border-border relative">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") onSearchEnter();
+              if (e.key === "Escape") setSearch("");
+            }}
+            placeholder="🔎 Tìm mã…"
+            className="w-full bg-transparent border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-blue-500"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white text-sm"
+              aria-label="Xoá tìm kiếm"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+
         <ul className="flex-1">
           {sortedSnapshot.map((r) => {
             const ret = r.daily_return ?? 0;
@@ -212,6 +241,9 @@ function PageInner() {
           })}
           {!snapshot.length && (
             <li className="text-gray-500 text-sm p-3">Đang tải hoặc DB rỗng…</li>
+          )}
+          {snapshot.length > 0 && !sortedSnapshot.length && (
+            <li className="text-gray-500 text-sm p-3">Không có mã nào khớp “{search}”.</li>
           )}
         </ul>
       </aside>
