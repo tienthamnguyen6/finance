@@ -3,6 +3,8 @@ import { GLM_MODEL_CHAT } from "@/lib/glm";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+// Tavily search + LLM stream có thể lâu → nâng giới hạn serverless.
+export const maxDuration = 60;
 
 type ClientMsg = { role: "user" | "assistant"; content: string };
 type SearchResult = { title: string; link: string; content?: string; media?: string; publish_date?: string };

@@ -5,6 +5,8 @@ import { enrich, type PriceRow } from "@/lib/indicators";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+// glm-5.2 reasoning có thể chạy 30-60s → nâng giới hạn serverless (Vercel Hobby tối đa 60s).
+export const maxDuration = 60;
 
 type Enriched = ReturnType<typeof enrich>;
 
