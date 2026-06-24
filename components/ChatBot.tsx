@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import Markdown from "./Markdown";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
@@ -149,16 +150,40 @@ export default function ChatBot() {
         {messages.map((m, i) => (
           <div
             key={i}
-            className={`whitespace-pre-wrap leading-relaxed ${
+            className={
               m.role === "user"
-                ? "ml-6 p-2 rounded-lg bg-blue-600/20 border border-blue-600/30"
+                ? "ml-6 p-2 rounded-lg bg-blue-600/20 border border-blue-600/30 whitespace-pre-wrap leading-relaxed"
                 : "mr-6 text-gray-200"
-            }`}
+            }
           >
-            {m.content || (loading && i === messages.length - 1 ? "…" : "")}
+            {m.role === "assistant" ? (
+              m.content ? (
+                <Markdown>{m.content}</Markdown>
+              ) : loading && i === messages.length - 1 ? (
+                "…"
+              ) : (
+                ""
+              )
+            ) : (
+              m.content
+            )}
           </div>
         ))}
       </div>
+
+      {loading && (
+        <div className="px-3 py-1.5 border-t border-border text-xs text-blue-400 flex items-center gap-2">
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+          {search ? "Đang tìm web và soạn câu trả lời…" : "Đang soạn câu trả lời…"}
+          <button
+            onClick={() => abortRef.current?.abort()}
+            className="ml-auto text-gray-400 hover:text-white"
+            title="Dừng"
+          >
+            ■ Dừng
+          </button>
+        </div>
+      )}
 
       <div className="p-2 border-t border-border">
         <div className="flex gap-2">
@@ -171,9 +196,15 @@ export default function ChatBot() {
                 send();
               }
             }}
-            placeholder={search ? "Hỏi gì đó (có web search)…" : "Hỏi kiến thức…"}
+            placeholder={
+              loading
+                ? "Đợi câu trả lời hiện tại xong…"
+                : search
+                ? "Hỏi gì đó (có web search)…"
+                : "Hỏi kiến thức…"
+            }
             rows={1}
-            className="flex-1 bg-transparent border border-border rounded px-2 py-1.5 text-sm resize-none outline-none focus:border-blue-500"
+            className="flex-1 bg-transparent border border-border rounded px-2 py-1.5 text-sm resize-none outline-none focus:border-blue-500 disabled:opacity-50"
             disabled={loading}
           />
           <button
@@ -181,7 +212,7 @@ export default function ChatBot() {
             disabled={loading || !input.trim()}
             className="px-3 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50"
           >
-            {loading ? "…" : "↑"}
+            ↑
           </button>
         </div>
       </div>

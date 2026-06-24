@@ -11,4 +11,9 @@ export const glm = new OpenAI({
   baseURL: process.env.GLM_API_BASE ?? "https://open.bigmodel.cn/api/paas/v4",
 });
 
+// Model mặc định: chất lượng cao cho phân tích kỹ thuật (output 1 lần, được cache).
 export const GLM_MODEL = process.env.GLM_MODEL ?? "glm-4.6";
+
+// Model riêng cho chatbot — ưu tiên latency. Có thể đặt env GLM_MODEL_CHAT để override.
+// Gợi ý: glm-4.5-air (nhanh, chất lượng tốt) hoặc glm-4-flash (rất nhanh, miễn phí, yếu hơn).
+export const GLM_MODEL_CHAT = process.env.GLM_MODEL_CHAT ?? "glm-4.5-air";

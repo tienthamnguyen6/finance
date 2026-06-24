@@ -6,8 +6,84 @@ import { enrich, type PriceRow } from "@/lib/indicators";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+type Enriched = ReturnType<typeof enrich>;
+
+// Tìm swing high/low cục bộ (fractal): đỉnh/đáy mà cao/thấp hơn `w` nến hai bên.
+// Đây là kháng cự/hỗ trợ "thật" thị trường từng phản ứng, thay vì chỉ min/max cửa sổ.
+function findSwings(rows: Enriched, w = 3) {
+  const highs: { date: string; price: number }[] = [];
+  const lows: { date: string; price: number }[] = [];
+  for (let i = w; i < rows.length - w; i++) {
+    const h = rows[i].high_price ?? rows[i].close_price;
+    const l = rows[i].low_price ?? rows[i].close_price;
+    let isHigh = true;
+    let isLow = true;
+    for (let j = i - w; j <= i + w; j++) {
+      if (j === i) continue;
+      const hj = rows[j].high_price ?? rows[j].close_price;
+      const lj = rows[j].low_price ?? rows[j].close_price;
+      if (hj >= h) isHigh = false;
+      if (lj <= l) isLow = false;
+    }
+    if (isHigh) highs.push({ date: rows[i].trade_date, price: h });
+    if (isLow) lows.push({ date: rows[i].trade_date, price: l });
+  }
+  return { highs, lows };
+}
+
+// ATR(14) — biên độ dao động trung bình, dùng ước lượng stop/target và R:R.
+function atr(rows: Enriched, period = 14): number | null {
+  if (rows.length < period + 1) return null;
+  const trs: number[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const h = rows[i].high_price ?? rows[i].close_price;
+    const l = rows[i].low_price ?? rows[i].close_price;
+    const pc = rows[i - 1].close_price;
+    trs.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+  }
+  const lastN = trs.slice(-period);
+  return lastN.reduce((s, v) => s + v, 0) / period;
+}
+
+// Chuỗi tăng/giảm liên tiếp tính tới phiên cuối.
+function streak(rows: Enriched): { dir: "tăng" | "giảm" | "đi ngang"; len: number } {
+  let len = 0;
+  let dir: "tăng" | "giảm" | "đi ngang" = "đi ngang";
+  for (let i = rows.length - 1; i > 0; i--) {
+    const r = rows[i].daily_return ?? 0;
+    const d = r > 0 ? "tăng" : r < 0 ? "giảm" : "đi ngang";
+    if (i === rows.length - 1) {
+      dir = d;
+      len = 1;
+    } else if (d === dir && d !== "đi ngang") len++;
+    else break;
+  }
+  return { dir, len };
+}
+
+// Phát hiện phân kỳ RSI vs giá trên ~14 phiên gần nhất (tín hiệu đảo chiều sớm).
+function rsiDivergence(rows: Enriched): string | null {
+  const w = rows.slice(-14);
+  if (w.length < 8) return null;
+  const prices = w.map((r) => r.close_price);
+  const rsis = w.map((r) => r.rsi14).filter((x): x is number => x != null);
+  if (rsis.length < 8) return null;
+  const half = Math.floor(w.length / 2);
+  const pMax1 = Math.max(...prices.slice(0, half));
+  const pMax2 = Math.max(...prices.slice(half));
+  const pMin1 = Math.min(...prices.slice(0, half));
+  const pMin2 = Math.min(...prices.slice(half));
+  const rMax1 = Math.max(...rows.slice(-14, -14 + half).map((r) => r.rsi14 ?? 0));
+  const rMax2 = Math.max(...rows.slice(-half).map((r) => r.rsi14 ?? 0));
+  const rMin1 = Math.min(...rows.slice(-14, -14 + half).map((r) => r.rsi14 ?? 100));
+  const rMin2 = Math.min(...rows.slice(-half).map((r) => r.rsi14 ?? 100));
+  if (pMax2 > pMax1 && rMax2 < rMax1) return "Phân kỳ ÂM: giá tạo đỉnh cao hơn nhưng RSI đỉnh thấp hơn → cảnh báo suy yếu đà tăng";
+  if (pMin2 < pMin1 && rMin2 > rMin1) return "Phân kỳ DƯƠNG: giá tạo đáy thấp hơn nhưng RSI đáy cao hơn → khả năng tạo đáy";
+  return null;
+}
+
 // Compute "features" — đại lượng tóm tắt để LLM khỏi phải tự đếm.
-function buildFeatures(enriched: ReturnType<typeof enrich>) {
+function buildFeatures(enriched: Enriched) {
   const n = enriched.length;
   const last = enriched[n - 1];
   const prev = enriched[n - 2];
@@ -24,8 +100,11 @@ function buildFeatures(enriched: ReturnType<typeof enrich>) {
   const volumes20 = recent20.map((r) => r.volume ?? 0);
   const avgVol = volumes20.reduce((s, v) => s + v, 0) / Math.max(1, volumes20.length);
   const volSpike = last.volume != null && avgVol > 0 ? last.volume / avgVol : null;
+  // Xu hướng khối lượng: TB 5 phiên gần / TB 5 phiên trước đó.
+  const vol5recent = enriched.slice(-5).reduce((s, r) => s + (r.volume ?? 0), 0) / 5;
+  const vol5prev = enriched.slice(-10, -5).reduce((s, r) => s + (r.volume ?? 0), 0) / 5;
+  const volTrend = vol5prev > 0 ? vol5recent / vol5prev : null;
 
-  // Đếm phiên xanh/đỏ 10 gần nhất.
   const recent10 = enriched.slice(-10);
   const up = recent10.filter((r) => (r.daily_return ?? 0) > 0).length;
   const down = recent10.filter((r) => (r.daily_return ?? 0) < 0).length;
@@ -34,6 +113,27 @@ function buildFeatures(enriched: ReturnType<typeof enrich>) {
     last.bb_upper != null && last.bb_lower != null && last.bb_upper !== last.bb_lower
       ? ((last.close_price - last.bb_lower) / (last.bb_upper - last.bb_lower)) * 100
       : null;
+  // Độ rộng Bollinger (volatility regime): (upper-lower)/mid. Hẹp = squeeze, sắp bung.
+  const bbWidth =
+    last.bb_upper != null && last.bb_lower != null && last.ma20
+      ? ((last.bb_upper - last.bb_lower) / last.ma20) * 100
+      : null;
+
+  const { highs, lows } = findSwings(enriched, 3);
+  const cls = last.close_price;
+  // Kháng cự = swing high gần nhất TRÊN giá; hỗ trợ = swing low gần nhất DƯỚI giá.
+  const resistances = highs
+    .filter((h) => h.price > cls)
+    .sort((a, b) => a.price - b.price)
+    .slice(0, 3);
+  const supports = lows
+    .filter((l) => l.price < cls)
+    .sort((a, b) => b.price - a.price)
+    .slice(0, 3);
+
+  const atr14 = atr(enriched, 14);
+  const stk = streak(enriched);
+  const divergence = rsiDivergence(enriched);
 
   return {
     date: last.trade_date,
@@ -64,19 +164,36 @@ function buildFeatures(enriched: ReturnType<typeof enrich>) {
         : null,
     bb_upper: last.bb_upper,
     bb_lower: last.bb_lower,
-    bb_position_pct: bbPos, // 0% = chạm dải dưới, 100% = chạm dải trên
+    bb_position_pct: bbPos,
+    bb_width_pct: bbWidth,
     volume_last: last.volume,
     volume_avg20: Math.round(avgVol),
-    volume_spike_x: volSpike, // >1.5 là bất thường
+    volume_spike_x: volSpike,
+    volume_trend_x: volTrend, // >1 = khối lượng đang tăng dần
     up_sessions_10d: up,
     down_sessions_10d: down,
+    streak_dir: stk.dir,
+    streak_len: stk.len,
+    atr14,
+    atr_pct: atr14 != null && last.close_price ? (atr14 / last.close_price) * 100 : null,
+    rsi_divergence: divergence,
+    swing_resistances: resistances, // kháng cự thật từ swing high
+    swing_supports: supports, // hỗ trợ thật từ swing low
   };
 }
 
 // POST /api/analyze  body: { ticker: "FPT", force?: boolean }
 // Mặc định: trả cache nếu có (cùng phiên giao dịch). force=true → rerun GLM và đè cache.
 export async function POST(req: NextRequest) {
-  const { ticker, force } = await req.json();
+  let ticker: string | undefined;
+  let force = false;
+  try {
+    const body = await req.json();
+    ticker = body?.ticker;
+    force = !!body?.force;
+  } catch {
+    return new Response("invalid json body", { status: 400 });
+  }
   if (!ticker) return new Response("missing ticker", { status: 400 });
   const sym = String(ticker).toUpperCase();
 
@@ -130,58 +247,71 @@ export async function POST(req: NextRequest) {
 
   // System prompt được giữ static giữa các request → Zhipu auto-cache phần prefix này
   // (Cached Input rẻ 5x so với Input thường). KHÔNG chèn ticker/data vào đây.
-  const sys = `Bạn là analyst kỹ thuật chuyên thị trường chứng khoán Việt Nam.
+  const sys = `Bạn là trưởng bộ phận phân tích kỹ thuật một quỹ đầu tư, chuyên TTCK Việt Nam. Người đọc là nhà đầu tư có kinh nghiệm — họ KHÔNG cần định nghĩa chỉ báo, họ cần đọc được cấu hình kỹ thuật RIÊNG của mã này và một kết luận có thể hành động.
 
 ## Nguyên tắc tuyệt đối
-1. Mỗi nhận định gồm 3 phần: **LUẬN ĐIỂM** + **BẰNG CHỨNG** (số liệu trích chính xác từ dữ liệu được cung cấp) + **CƠ CHẾ** (giải thích tại sao tín hiệu kỹ thuật này dẫn tới hệ quả đó dựa trên lý thuyết).
-2. KHÔNG bịa tin tức, sự kiện vĩ mô, dòng tiền khối ngoại, hay bất kỳ con số nào nằm ngoài dữ liệu được cung cấp.
-3. KHÔNG khuyến nghị mua/bán dứt khoát. Luôn nêu điều kiện invalidation (khi nào nhận định bị bác bỏ).
-4. Trả lời tiếng Việt, format markdown, ngắn gọn, đi thẳng vào trọng tâm.
+1. KHÔNG giảng lý thuyết sách giáo khoa. Cấm các câu định nghĩa chung như "RSI là chỉ báo đo...". Thay vào đó luôn nói về CON SỐ CỤ THỂ của mã này và nó HÀM Ý GÌ.
+2. Mỗi nhận định = SỐ LIỆU cụ thể → SUY LUẬN cơ chế → HỆ QUẢ giao dịch. Không nêu số liệu suông, không kết luận chay.
+3. Khi nhiều tín hiệu mâu thuẫn (vd MACD tăng nhưng RSI phân kỳ âm), PHẢI nêu rõ mâu thuẫn và cân nhắc bên nào thắng thế, đừng liệt kê song song cho an toàn.
+4. KHÔNG bịa tin tức/sự kiện vĩ mô/khối ngoại/số liệu ngoài dữ liệu cung cấp.
+5. KHÔNG hô "mua/bán" kiểu phím hàng. Nhưng PHẢI đưa kết luận actionable: kịch bản xác suất cao nhất, vùng giá quan tâm, mức kích hoạt, mức vô hiệu hoá (invalidation), và tỷ lệ lời/lỗ ước tính.
+6. Tiếng Việt, markdown, súc tích. Ưu tiên mật độ thông tin trên độ dài — thà 6 câu sắc còn hơn 3 đoạn loãng.
 
-## Cấu trúc output bắt buộc
+## Cấu trúc output bắt buộc (giữ đúng heading)
 
-### 1. Bối cảnh & xu hướng
-Nêu xu hướng chủ đạo (1-3 tháng) — bằng chứng từ MA20/MA50, position so với biên 20 phiên. Giải thích cơ chế (tại sao MA cắt nhau hoặc giá break đỉnh/đáy lại hàm ý xu hướng đó).
+### 1. Chẩn đoán nhanh
+2-3 câu chốt ngay: mã đang ở pha nào (tăng/giảm/tích luỹ/phân phối), vị thế kỹ thuật mạnh hay yếu, và điều quan trọng nhất nhà đầu tư cần biết lúc này. Đây là phần "đọc 10 giây hiểu ngay".
 
-### 2. Tín hiệu kỹ thuật then chốt
-Liệt kê 2-3 tín hiệu nổi bật từ RSI / MACD / Bollinger / volume. Mỗi tín hiệu phải có:
-- **Quan sát**: số liệu cụ thể
-- **Hệ quả thường gặp**: theo lý thuyết kỹ thuật (vd: RSI > 70 → áp lực chốt lời ngắn hạn; phân kỳ âm RSI-giá → cảnh báo đảo chiều)
-- **Lưu ý**: tín hiệu này có thể sai khi nào (vd: trong xu hướng tăng mạnh, RSI > 70 vẫn duy trì nhiều phiên)
+### 2. Cấu hình kỹ thuật
+Phân tích sự GIAO THOA của các chỉ báo (không liệt kê rời rạc):
+- Cấu trúc xu hướng: tương quan giá–MA20–MA50, độ dốc, khoảng cách %.
+- Động lượng: MACD histogram đang mở rộng hay co lại + RSI + phân kỳ (nếu có) → đà thật sự đang mạnh lên hay yếu đi?
+- Biến động & vị thế: vị trí trong dải Bollinger, độ rộng dải (squeeze hay đang giãn), ATR cho biết biên dao động kỳ vọng.
+- Dòng tiền: xu hướng khối lượng 5 phiên + spike phiên cuối → tiền vào hay ra, xác nhận hay phủ nhận giá.
+Kết đoạn bằng 1 câu tổng hợp: các tín hiệu ĐỒNG THUẬN hay PHÂN KỲ với nhau?
 
-### 3. Diễn biến phiên gần nhất
-Giải thích Δ1d bằng cơ chế: volume có spike bất thường không, giá đóng ở đâu trong biên ngày (gần high/low), tương quan với MA và dải Bollinger, có gap không.
+### 3. Vùng giá then chốt
+Bảng markdown 2 cột (Mức giá | Ý nghĩa & độ tin cậy). Dùng các swing high/low THẬT được cung cấp + MA + Bollinger. Xếp từ kháng cự xa nhất xuống hỗ trợ xa nhất, đánh dấu mức gần giá hiện tại nhất là "trọng yếu".
 
-### 4. Kháng cự / hỗ trợ
-Ước tính 2 mức kháng cự và 2 mức hỗ trợ, lấy từ: biên 20 phiên, MA20/MA50, dải Bollinger, các đỉnh/đáy local quan sát được trong OHLCV. Nêu lý do chọn mỗi mức.
+### 4. Kịch bản giao dịch
+- **Kịch bản chính (xác suất ~X%)**: diễn biến nhiều khả năng nhất + lý do.
+- **Kịch bản phụ (~Y%)**: phản đề.
+- **Mức kích hoạt**: giá/điều kiện + volume xác nhận để mỗi kịch bản thành hiện thực.
+- **Mức vô hiệu hoá (invalidation)**: phá mức nào thì kịch bản chính sai.
+- **R:R ước tính**: dùng ATR/khoảng cách tới kháng cự–hỗ trợ gần nhất để ước lượng lời:lỗ (vd "tới kháng cự gần +3.2%, tới hỗ trợ gần -1.8% → R:R ~1.8:1").
 
-### 5. Kịch bản & điều kiện invalidation
-- **Kịch bản tăng**: cần điều kiện gì xác nhận (vd: đóng cửa trên kháng cự X với volume > Y)?
-- **Kịch bản giảm**: cần break mức nào để xác nhận đảo chiều?
-- **Rủi ro chính** dựa trên dữ liệu hiện tại (vd: RSI quá mua + volume yếu = phân kỳ).
+### 5. Rủi ro cần theo dõi
+2-3 gạch đầu dòng: điều gì có thể khiến phân tích sai, tín hiệu cảnh báo sớm cần canh ở phiên tới.
 
-## Quy tắc bằng chứng
-- Khi trích số liệu, ghi chính xác (vd: "RSI14 = 67.3" không phải "RSI cao").
-- Khi nói "khối lượng tăng đột biến", phải nêu hệ số so với TB 20 phiên.
-- Khi nói "vượt MA20", phải nêu khoảng cách % cụ thể.`;
+## Quy tắc số liệu
+- Trích chính xác: "RSI14 = 67.3" không phải "RSI cao". "Volume 0.8x TB20" không phải "thanh khoản thấp".
+- Mọi nhận định về mức giá phải kèm khoảng cách % so với giá hiện tại.
+- Ước lượng xác suất kịch bản phải nhất quán với độ mạnh tín hiệu, không phải 50/50 cho an toàn.`;
+
+  const swingTxt = (arr: { date: string; price: number }[]) =>
+    arr.length ? arr.map((s) => `${s.price} (${s.date})`).join(", ") : "không rõ trong cửa sổ dữ liệu";
 
   const user = `Phân tích kỹ thuật mã **${ticker}** dựa trên dữ liệu sau:
 
 ## Chỉ số tổng hợp phiên ${f.date}
 - Giá đóng: **${f.close}** | Δ1d: ${f.chg_1d?.toFixed(2)}% | Δ5d: ${f.chg_5d?.toFixed(2)}% | Δ20d: ${f.chg_20d?.toFixed(2)}%
-- Biên 20 phiên: cao ${f.high_20d} / thấp ${f.low_20d} → giá đang cách đỉnh ${f.dist_from_high20_pct?.toFixed(2)}%, cách đáy ${f.dist_from_low20_pct?.toFixed(2)}%
-- MA20: ${f.ma20?.toFixed(2)} (giá ${f.price_vs_ma20_pct?.toFixed(2)}% so với MA20)
-- MA50: ${f.ma50?.toFixed(2)} (giá ${f.price_vs_ma50_pct?.toFixed(2)}% so với MA50) — ${f.ma20_vs_ma50}
-- RSI14: **${f.rsi14?.toFixed(1)}** (${f.rsi_state})
+- Chuỗi hiện tại: ${f.streak_len} phiên ${f.streak_dir} liên tiếp | 10 phiên gần nhất: ${f.up_sessions_10d} xanh / ${f.down_sessions_10d} đỏ
+- Biên 20 phiên: cao ${f.high_20d} / thấp ${f.low_20d} → cách đỉnh ${f.dist_from_high20_pct?.toFixed(2)}%, cách đáy ${f.dist_from_low20_pct?.toFixed(2)}%
+- MA20: ${f.ma20?.toFixed(2)} (giá ${f.price_vs_ma20_pct?.toFixed(2)}% so MA20) | MA50: ${f.ma50?.toFixed(2)} (giá ${f.price_vs_ma50_pct?.toFixed(2)}% so MA50) — ${f.ma20_vs_ma50}
+- RSI14: **${f.rsi14?.toFixed(1)}** (${f.rsi_state})${f.rsi_divergence ? ` | ⚠️ ${f.rsi_divergence}` : ""}
 - MACD: ${f.macd?.toFixed(3)} | signal: ${f.macd_signal?.toFixed(3)} | hist: ${f.macd_hist?.toFixed(3)} — ${f.macd_state}
-- Bollinger: upper ${f.bb_upper?.toFixed(2)} / lower ${f.bb_lower?.toFixed(2)} — vị trí ${f.bb_position_pct?.toFixed(0)}% (0=chạm dải dưới, 100=chạm dải trên)
-- Khối lượng phiên cuối: ${f.volume_last?.toLocaleString()} (TB 20 phiên: ${f.volume_avg20?.toLocaleString()}, hệ số ${f.volume_spike_x?.toFixed(2)}x)
-- 10 phiên gần nhất: ${f.up_sessions_10d} xanh / ${f.down_sessions_10d} đỏ
+- Bollinger: upper ${f.bb_upper?.toFixed(2)} / lower ${f.bb_lower?.toFixed(2)} | vị trí ${f.bb_position_pct?.toFixed(0)}% (0=dải dưới,100=dải trên) | độ rộng dải ${f.bb_width_pct?.toFixed(1)}% (hẹp<8% = squeeze)
+- ATR14: ${f.atr14?.toFixed(3)} (${f.atr_pct?.toFixed(2)}% giá) → biên dao động kỳ vọng/phiên
+- Khối lượng: phiên cuối ${f.volume_last?.toLocaleString()} = ${f.volume_spike_x?.toFixed(2)}x TB20 (${f.volume_avg20?.toLocaleString()}) | xu hướng vol 5 phiên: ${f.volume_trend_x?.toFixed(2)}x so 5 phiên trước (${(f.volume_trend_x ?? 1) > 1 ? "tăng dần" : "giảm dần"})
+
+## Mức kỹ thuật thật (swing fractal)
+- Kháng cự (swing high trên giá): ${swingTxt(f.swing_resistances)}
+- Hỗ trợ (swing low dưới giá): ${swingTxt(f.swing_supports)}
 
 ## OHLCV 10 phiên cuối
 ${last10.map((r) => `${r.d}: O=${r.o} H=${r.h} L=${r.l} C=${r.c} V=${r.v?.toLocaleString()} (${r.ret}%)`).join("\n")}
 
-Trả lời theo đúng 5 mục đã định nghĩa ở system prompt.`;
+Phân tích theo đúng 5 mục ở system prompt. Tập trung vào cấu hình RIÊNG của mã này, chốt kết luận actionable ở mục 4.`;
 
   const stream = await glm.chat.completions.create({
     model: GLM_MODEL,

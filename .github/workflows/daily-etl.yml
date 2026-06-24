@@ -33,3 +33,13 @@ jobs:
           BACKFILL_DAYS: ${{ github.event.inputs.backfill_days || '7' }}
           VNSTOCK_SOURCE: VCI
         run: python main.py
+
+      - name: Generate daily AI brief
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+          GLM_API_BASE: ${{ secrets.GLM_API_BASE }}
+          GLM_MODEL: ${{ secrets.GLM_MODEL_BRIEF || 'glm-4.6' }}
+        run: python daily_brief.py
+        continue-on-error: true # brief lỗi không nên chặn ETL

@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import PriceChart from "@/components/PriceChart";
 import AIAnalysis from "@/components/AIAnalysis";
 import Sparkline from "@/components/Sparkline";
+import MarketBrief from "@/components/MarketBrief";
 
 type SnapshotRow = {
   ticker: string;
@@ -27,6 +28,10 @@ type HistoryRow = {
   ma50: number | null;
   bb_upper: number | null;
   bb_lower: number | null;
+  rsi14: number | null;
+  macd: number | null;
+  macd_signal: number | null;
+  macd_hist: number | null;
 };
 
 export default function Page() {
@@ -45,6 +50,7 @@ function PageInner() {
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [loadingHist, setLoadingHist] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>("ticker");
+  const [chartDays, setChartDays] = useState(120);
 
   useEffect(() => {
     fetch("/api/prices")
@@ -85,11 +91,11 @@ function PageInner() {
   useEffect(() => {
     if (!active) return;
     setLoadingHist(true);
-    fetch(`/api/prices?ticker=${active}&days=120&indicators=1`)
+    fetch(`/api/prices?ticker=${active}&days=${chartDays}&indicators=1`)
       .then((r) => r.json())
       .then((d) => setHistory(d.rows ?? []))
       .finally(() => setLoadingHist(false));
-  }, [active]);
+  }, [active, chartDays]);
 
   const stats = useMemo(() => {
     if (history.length < 2) return null;
@@ -108,12 +114,15 @@ function PageInner() {
         <div className="p-3 border-b border-border">
           <h1 className="font-bold text-lg">Finance AI</h1>
           <p className="text-xs text-gray-400">VN30 · GLM-powered</p>
-          <div className="mt-2 flex gap-3 text-xs">
+          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
             <Link href="/screen" className="text-blue-400 hover:underline">
               🔍 Screener
             </Link>
             <Link href="/compare" className="text-blue-400 hover:underline">
               ⚖️ So sánh
+            </Link>
+            <Link href="/heatmap" className="text-blue-400 hover:underline">
+              🔥 Heatmap
             </Link>
           </div>
         </div>
@@ -167,6 +176,7 @@ function PageInner() {
 
       {/* Main */}
       <main className="flex-1 overflow-y-auto p-6 space-y-4">
+        <MarketBrief />
         {active ? (
           <>
             <header className="flex items-baseline gap-4">
@@ -185,11 +195,11 @@ function PageInner() {
             </header>
 
             <section className="bg-panel border border-border rounded-lg p-4">
-              <h3 className="font-semibold mb-2">Nến + Volume — 120 phiên</h3>
+              <h3 className="font-semibold mb-2">Phân tích kỹ thuật — {chartDays} phiên</h3>
               {loadingHist ? (
                 <div className="text-gray-500 text-sm">Đang tải biểu đồ…</div>
               ) : (
-                <PriceChart rows={history} />
+                <PriceChart rows={history} days={chartDays} onDaysChange={setChartDays} />
               )}
             </section>
 

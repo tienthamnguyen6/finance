@@ -5,6 +5,33 @@ from vnstock import Vnstock
 from supabase import create_client, Client
 from datetime import datetime, timedelta
 
+
+def load_dotenv(path: str = ".env.local") -> None:
+    """Đọc .env.local an toàn (utf-8-sig để bỏ BOM, strip quote/space).
+    Chỉ set biến chưa có trong môi trường → cho phép override từ CI/shell."""
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8-sig") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip()
+            # Cắt comment inline (chuẩn dotenv: ` #...`), trừ khi value nằm trong quote.
+            if not (val.startswith('"') or val.startswith("'")):
+                for sep in (" #", "\t#"):
+                    idx = val.find(sep)
+                    if idx != -1:
+                        val = val[:idx]
+            val = val.strip().strip('"').strip("'").strip()
+            if key and key not in os.environ:
+                os.environ[key] = val
+
+
+load_dotenv()
+
 # Nguồn dữ liệu: VCI (mặc định ổn nhất), có thể đổi sang TCBS/MSN.
 VN_SOURCE = os.environ.get("VNSTOCK_SOURCE", "VCI")
 _vn = Vnstock()

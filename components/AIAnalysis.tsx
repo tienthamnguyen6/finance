@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import Markdown from "./Markdown";
 
 export default function AIAnalysis({ ticker }: { ticker: string }) {
   const [text, setText] = useState("");
@@ -74,9 +75,9 @@ export default function AIAnalysis({ ticker }: { ticker: string }) {
       </div>
       {err && <div className="text-red-400 text-sm whitespace-pre-wrap">{err}</div>}
       {text && (
-        <pre className="whitespace-pre-wrap font-sans text-sm text-gray-200 leading-relaxed">
-          {text}
-        </pre>
+        <div className="text-sm">
+          <Markdown>{text}</Markdown>
+        </div>
       )}
       {!text && !err && !loading && (
         <div className="text-gray-500 text-sm">Chưa có phân tích cho mã này.</div>

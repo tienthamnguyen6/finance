@@ -1,3 +1,4 @@
 vnstock
 pandas
 supabase
+openai
