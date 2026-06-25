@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import pandas as pd
 from vnstock import Vnstock
@@ -91,7 +92,9 @@ def fetch_history_with_retry(ticker: str, start_date: str, end_date: str, max_re
                 time.sleep(wait)
                 continue
             raise
-    return None
+    # Hết retry mà vẫn bị rate-limit → ném lỗi để main() ghi nhận mã thất bại,
+    # KHÔNG trả None (sẽ bị nhầm thành "không có dữ liệu mới" và nuốt âm thầm).
+    raise RuntimeError(f"{ticker}: bị rate-limit sau {max_retries} lần thử")
 
 
 def get_date_range(ticker: str):
@@ -190,13 +193,36 @@ def main():
     print(f"📋 Cào {len(tickers)} mã, dải {start_date} → {end_date}")
 
     total = 0
+    failed = []
     for i, ticker in enumerate(tickers, 1):
-        total += fetch_and_upsert(ticker, start_date, end_date)
+        try:
+            total += fetch_and_upsert(ticker, start_date, end_date)
+        except Exception as e:
+            print(f"❌ {ticker}: cào thất bại ({e})")
+            failed.append(ticker)
         # Guest tier vnstock = 20 req/phút → sleep ~3.2s/ticker để không vượt ngưỡng.
         if i < len(tickers):
             time.sleep(3.2)
 
+    # Pass 2: thử lại các mã thất bại với khoảng nghỉ dài hơn (IP GitHub Actions
+    # hay bị rate-limit). Tránh để mất dữ liệu ngày mà job vẫn báo thành công.
+    if failed:
+        print(f"🔁 Thử lại {len(failed)} mã thất bại: {failed}")
+        still_failed = []
+        for ticker in failed:
+            time.sleep(10)
+            try:
+                total += fetch_and_upsert(ticker, start_date, end_date)
+            except Exception as e:
+                print(f"❌ {ticker}: vẫn thất bại ({e})")
+                still_failed.append(ticker)
+        failed = still_failed
+
     print(f"🏁 Hoàn tất: {total} dòng đã upsert.")
+    if failed:
+        # Exit ≠ 0 → GitHub Actions báo đỏ và gửi email cảnh báo, không nuốt lỗi.
+        print(f"⚠️ {len(failed)}/{len(tickers)} mã KHÔNG cào được: {failed}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
