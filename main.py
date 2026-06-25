@@ -33,8 +33,11 @@ def load_dotenv(path: str = ".env.local") -> None:
 
 load_dotenv()
 
-# Nguồn dữ liệu: VCI (mặc định ổn nhất), có thể đổi sang TCBS/MSN.
+# Nguồn dữ liệu chính + danh sách dự phòng. Khi nguồn này bị rate-limit (hay xảy ra
+# trên IP GitHub Actions), thử ngay nguồn kế tiếp trước khi phải chờ qua cửa sổ 60s.
+# Nguồn hợp lệ của vnstock hiện tại: VCI, MSN, KBS, FMP.
 VN_SOURCE = os.environ.get("VNSTOCK_SOURCE", "VCI")
+VN_SOURCES = [VN_SOURCE] + [s for s in ("VCI", "MSN", "KBS") if s != VN_SOURCE]
 _vn = Vnstock()
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -77,24 +80,39 @@ def get_vn30_tickers():
     return merged
 
 
-def fetch_history_with_retry(ticker: str, start_date: str, end_date: str, max_retries: int = 3):
-    """Gọi vnstock, gặp rate-limit thì ngủ rồi thử lại."""
-    stock = _vn.stock(symbol=ticker, source=VN_SOURCE)
+def _is_rate_limit(e: Exception) -> bool:
+    msg = str(e).lower()
+    return 'limit' in msg or 'rate' in msg or '429' in msg or 'quá nhiều' in msg
+
+
+def fetch_history_with_retry(ticker: str, start_date: str, end_date: str, max_retries: int = 2):
+    """Cào lịch sử giá. Gặp rate-limit thì đổi sang nguồn dự phòng ngay; chỉ khi
+    MỌI nguồn đều bị chặn mới chờ qua cửa sổ 60s rồi thử lại."""
+    last_err = None
     for attempt in range(max_retries):
-        try:
-            df = stock.quote.history(start=start_date, end=end_date, interval='1D')
-            return df
-        except Exception as e:
-            msg = str(e).lower()
-            if 'limit' in msg or 'rate' in msg or '429' in msg or 'quá nhiều' in msg:
-                wait = 65  # qua hẳn cửa sổ 60s
-                print(f"⏳ {ticker}: rate-limit, chờ {wait}s rồi thử lại (lần {attempt + 1}/{max_retries})")
-                time.sleep(wait)
-                continue
-            raise
-    # Hết retry mà vẫn bị rate-limit → ném lỗi để main() ghi nhận mã thất bại,
-    # KHÔNG trả None (sẽ bị nhầm thành "không có dữ liệu mới" và nuốt âm thầm).
-    raise RuntimeError(f"{ticker}: bị rate-limit sau {max_retries} lần thử")
+        rate_limited = False
+        for src in VN_SOURCES:
+            try:
+                df = _vn.stock(symbol=ticker, source=src) \
+                    .quote.history(start=start_date, end=end_date, interval='1D')
+                if src != VN_SOURCES[0] or attempt > 0:
+                    print(f"   ↳ {ticker}: lấy được từ nguồn {src}")
+                return df
+            except Exception as e:
+                last_err = e
+                if _is_rate_limit(e):
+                    rate_limited = True
+                continue  # thử nguồn kế tiếp (kể cả lỗi non-rate-limit của 1 nguồn)
+        # Chỉ chờ qua cửa sổ 60s khi nguyên nhân là rate-limit; lỗi khác chờ vô ích.
+        if rate_limited and attempt < max_retries - 1:
+            wait = 65
+            print(f"⏳ {ticker}: mọi nguồn rate-limit, chờ {wait}s (vòng {attempt + 1}/{max_retries})")
+            time.sleep(wait)
+        elif not rate_limited:
+            break
+    # Mọi nguồn đều fail → ném lỗi để main() ghi nhận mã thất bại, KHÔNG trả None
+    # (sẽ bị nhầm thành "không có dữ liệu mới" và nuốt âm thầm).
+    raise RuntimeError(f"{ticker}: không cào được từ nguồn nào {VN_SOURCES}") from last_err
 
 
 def get_date_range(ticker: str):
@@ -200,9 +218,9 @@ def main():
         except Exception as e:
             print(f"❌ {ticker}: cào thất bại ({e})")
             failed.append(ticker)
-        # Guest tier vnstock = 20 req/phút → sleep ~3.2s/ticker để không vượt ngưỡng.
+        # Guest tier vnstock ~20 req/phút → sleep ~4s/ticker để bớt áp lực rate-limit.
         if i < len(tickers):
-            time.sleep(3.2)
+            time.sleep(4.0)
 
     # Pass 2: thử lại các mã thất bại với khoảng nghỉ dài hơn (IP GitHub Actions
     # hay bị rate-limit). Tránh để mất dữ liệu ngày mà job vẫn báo thành công.
